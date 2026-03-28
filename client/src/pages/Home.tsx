@@ -269,8 +269,8 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
   const targetLetters = currentWord.word.toLowerCase().replace(/[^a-z]/g, "");
   const displayChars = currentWord.word.split("");
 
-  // ── Cloud TTS helpers (uses /api/tts → OpenAI TTS, falls back to browser) ──
-  // Ref to track the currently playing Audio object so we can stop it
+  // ── TTS helpers — uses Google Translate audio URL as <Audio> src (no CORS on media elements)
+  // Falls back to Web Speech API if audio fails.
   const currentAudio = useRef<HTMLAudioElement | null>(null);
 
   const stopAudio = useCallback(() => {
@@ -282,38 +282,42 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   }, []);
 
-  // Play audio from the cloud TTS endpoint; falls back to browser speech on error
+  // Build a Google Translate TTS URL — browsers can load audio src cross-origin without CORS
+  const gttsUrl = (text: string) =>
+    `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=en&client=tw-ob&ttsspeed=0.8`;
+
+  // Play a single piece of text via Google TTS audio; falls back to Web Speech API
   const playTTS = useCallback((text: string): Promise<void> => {
     return new Promise((resolve) => {
       stopAudio();
-      fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, voice: "nova" }),
-      })
-        .then(res => {
-          if (!res.ok) throw new Error(`TTS HTTP ${res.status}`);
-          return res.blob();
-        })
-        .then(blob => {
-          const url = URL.createObjectURL(blob);
-          const audio = new Audio(url);
-          currentAudio.current = audio;
-          audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
-          audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
-          audio.play().catch(() => resolve());
-        })
-        .catch(() => {
-          // Fallback to browser speech synthesis
-          if ("speechSynthesis" in window) {
-            const utt = new SpeechSynthesisUtterance(text);
-            utt.rate = 0.75; utt.pitch = 1.0; utt.volume = 1.0;
-            utt.onend = () => resolve();
-            window.speechSynthesis.speak(utt);
-          } else {
-            resolve();
-          }
-        });
+      const audio = new Audio(gttsUrl(text));
+      audio.crossOrigin = "anonymous";
+      currentAudio.current = audio;
+      audio.onended = () => resolve();
+      audio.onerror = () => {
+        // Fallback: browser Web Speech API
+        if ("speechSynthesis" in window) {
+          const utt = new SpeechSynthesisUtterance(text);
+          utt.rate = 0.75; utt.pitch = 1.0; utt.volume = 1.0;
+          utt.onend = () => resolve();
+          utt.onerror = () => resolve();
+          window.speechSynthesis.speak(utt);
+        } else {
+          resolve();
+        }
+      };
+      audio.play().catch(() => {
+        // autoplay blocked — try Web Speech API
+        if ("speechSynthesis" in window) {
+          const utt = new SpeechSynthesisUtterance(text);
+          utt.rate = 0.75; utt.pitch = 1.0; utt.volume = 1.0;
+          utt.onend = () => resolve();
+          utt.onerror = () => resolve();
+          window.speechSynthesis.speak(utt);
+        } else {
+          resolve();
+        }
+      });
     });
   }, [stopAudio]);
 

@@ -15,3 +15,7 @@
 - [x] Replace browser Web Speech API with Google Translate TTS (clear audio, works on Fire tablet)
 - [x] Fix wrong-answer feedback banner to not reveal the word
 - [x] Fix hint to show definition only (not the answer)
+- [x] Remove backend TTS dependency — use Google Translate audio URL directly from client (no CORS on audio elements)
+- [x] Add vite.github-pages.config.ts with /spelling-bee-app/ base path
+- [x] Add build:pages script to package.json
+- [x] Create .github/workflows/deploy-pages.yml GitHub Actions workflow for GitHub Pages deployment

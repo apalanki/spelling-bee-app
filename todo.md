@@ -1,0 +1,17 @@
+# Spelling Bee Adventure - TODO
+
+- [x] Extract all 450 words with definitions and parts of speech from PDF
+- [x] Build candy-pop themed home screen with 45 word sets grid
+- [x] Build touch-optimized on-screen keyboard (large keys for Fire tablet)
+- [x] Add bee mascot with idle/happy/sad animations
+- [x] Add confetti on correct answers
+- [x] Add progress tracking (green dots, stars) saved in localStorage
+- [x] Add reset progress option via gear icon
+- [x] Add Hear Word button (says word twice with pause)
+- [x] Add Spell It button (reads each letter with visual highlight)
+- [x] Add Hint button (shows definition only, no answer reveal)
+- [x] Add Skip button
+- [x] Add group complete screen with Try Again / Home buttons
+- [x] Replace browser Web Speech API with Google Translate TTS (clear audio, works on Fire tablet)
+- [x] Fix wrong-answer feedback banner to not reveal the word
+- [x] Fix hint to show definition only (not the answer)

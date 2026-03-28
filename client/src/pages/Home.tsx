@@ -269,106 +269,90 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
   const targetLetters = currentWord.word.toLowerCase().replace(/[^a-z]/g, "");
   const displayChars = currentWord.word.split("");
 
-  // ── Speech helpers ────────────────────────────────────────────────────────
-  // Pick the clearest available voice (prefer a female English voice for kids)
-  const pickVoice = useCallback((): SpeechSynthesisVoice | null => {
-    if (!("speechSynthesis" in window)) return null;
-    const voices = window.speechSynthesis.getVoices();
-    // Prefer voices that work well on Fire tablet / Android WebView
-    const preferred = voices.find(v =>
-      v.lang.startsWith("en") && /samantha|karen|moira|victoria|fiona|google us|google uk|zira|hazel/i.test(v.name)
-    ) || voices.find(v => v.lang === "en-US" && v.localService) ||
-      voices.find(v => v.lang.startsWith("en"));
-    return preferred || null;
+  // ── Cloud TTS helpers (uses /api/tts → OpenAI TTS, falls back to browser) ──
+  // Ref to track the currently playing Audio object so we can stop it
+  const currentAudio = useRef<HTMLAudioElement | null>(null);
+
+  const stopAudio = useCallback(() => {
+    if (currentAudio.current) {
+      currentAudio.current.pause();
+      currentAudio.current.src = "";
+      currentAudio.current = null;
+    }
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   }, []);
 
-  const speak = useCallback((text: string, rate = 0.72, pitch = 1.0) => {
-    if (!("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
-    const utt = new SpeechSynthesisUtterance(text);
-    utt.rate = rate;
-    utt.pitch = pitch;
-    utt.volume = 1.0;
-    const v = pickVoice();
-    if (v) utt.voice = v;
-    window.speechSynthesis.speak(utt);
-  }, [pickVoice]);
-
-  // Speak word clearly: say it once, pause, say it again
-  const speakWord = useCallback((word: string) => {
-    if (!("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
-    const voice = pickVoice();
-
-    const say = (text: string, rate: number, onEnd?: () => void) => {
-      const utt = new SpeechSynthesisUtterance(text);
-      utt.rate = rate;
-      utt.pitch = 1.0;
-      utt.volume = 1.0;
-      if (voice) utt.voice = voice;
-      if (onEnd) utt.onend = onEnd;
-      window.speechSynthesis.speak(utt);
-    };
-
-    // Say word slowly, then pause (via silent utterance), then say again
-    say(word, 0.68, () => {
-      const pause = new SpeechSynthesisUtterance(" ");
-      pause.volume = 0;
-      pause.rate = 0.1;
-      if (voice) pause.voice = voice;
-      pause.onend = () => say(word, 0.72);
-      window.speechSynthesis.speak(pause);
+  // Play audio from the cloud TTS endpoint; falls back to browser speech on error
+  const playTTS = useCallback((text: string): Promise<void> => {
+    return new Promise((resolve) => {
+      stopAudio();
+      fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, voice: "nova" }),
+      })
+        .then(res => {
+          if (!res.ok) throw new Error(`TTS HTTP ${res.status}`);
+          return res.blob();
+        })
+        .then(blob => {
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          currentAudio.current = audio;
+          audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
+          audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
+          audio.play().catch(() => resolve());
+        })
+        .catch(() => {
+          // Fallback to browser speech synthesis
+          if ("speechSynthesis" in window) {
+            const utt = new SpeechSynthesisUtterance(text);
+            utt.rate = 0.75; utt.pitch = 1.0; utt.volume = 1.0;
+            utt.onend = () => resolve();
+            window.speechSynthesis.speak(utt);
+          } else {
+            resolve();
+          }
+        });
     });
-  }, [pickVoice]);
+  }, [stopAudio]);
 
-  // Spell it out: say word, then each letter with highlight sync
+  // Simple one-shot speak (for feedback messages)
+  const speak = useCallback((text: string) => {
+    playTTS(text).catch(() => {});
+  }, [playTTS]);
+
+  // Speak word twice: say it, pause 700ms, say it again
+  const speakWord = useCallback((word: string) => {
+    stopAudio();
+    playTTS(word)
+      .then(() => new Promise<void>(r => setTimeout(r, 700)))
+      .then(() => playTTS(word))
+      .catch(() => {});
+  }, [playTTS, stopAudio]);
+
+  // Spell it out letter by letter with visual highlight sync
   const spellWord = useCallback((word: string) => {
-    if (!("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
+    stopAudio();
     setSpellingIndex(-1);
-    const voice = pickVoice();
     const letters = word.replace(/[^a-zA-Z]/g, "").split("");
 
-    const say = (text: string, rate: number, onStart?: () => void, onEnd?: () => void) => {
-      const utt = new SpeechSynthesisUtterance(text);
-      utt.rate = rate;
-      utt.pitch = 1.0;
-      utt.volume = 1.0;
-      if (voice) utt.voice = voice;
-      if (onStart) utt.onstart = onStart;
-      if (onEnd) utt.onend = onEnd;
-      window.speechSynthesis.speak(utt);
+    const spellLetters = (idx: number): Promise<void> => {
+      if (idx >= letters.length) {
+        setSpellingIndex(-1);
+        return Promise.resolve();
+      }
+      setSpellingIndex(idx);
+      return playTTS(letters[idx])
+        .then(() => new Promise<void>(r => setTimeout(r, 150)))
+        .then(() => spellLetters(idx + 1));
     };
 
-    // First say the full word, then spell each letter with highlight
-    say(word, 0.7, undefined, () => {
-      const spellLetters = (idx: number) => {
-        if (idx >= letters.length) {
-          setSpellingIndex(-1);
-          return;
-        }
-        say(
-          letters[idx],
-          0.55,
-          () => setSpellingIndex(idx),
-          () => spellLetters(idx + 1)
-        );
-      };
-      const pause = new SpeechSynthesisUtterance(" ");
-      pause.volume = 0; pause.rate = 0.1;
-      if (voice) pause.voice = voice;
-      pause.onend = () => spellLetters(0);
-      window.speechSynthesis.speak(pause);
-    });
-  }, [pickVoice]);
-
-  // Ensure voices are loaded (needed on some Android/Fire OS browsers)
-  useEffect(() => {
-    if ("speechSynthesis" in window) {
-      window.speechSynthesis.getVoices();
-      window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
-    }
-  }, []);
+    playTTS(word)
+      .then(() => new Promise<void>(r => setTimeout(r, 500)))
+      .then(() => spellLetters(0))
+      .catch(() => {});
+  }, [playTTS, stopAudio]);
 
   // Reset state when word changes
   useEffect(() => {
@@ -406,7 +390,7 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
         setBeeState("happy");
         setShowConfetti(true);
         onUpdateProgress(currentWord.id, true);
-        speak("Amazing! You got it!", 0.85, 1.1);
+        speak("Amazing! You got it!");
         feedbackTimer.current = setTimeout(advanceWord, 2000);
       } else {
         setFeedback("wrong");
@@ -414,7 +398,7 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
         const wrong = new Set<string>();
         newTyped.forEach((l, i) => { if (l !== targetLetters[i]) wrong.add(l); });
         setWrongLetters(wrong);
-        speak("Oops! Try again!", 0.85, 1.0);
+        speak("Oops! Try again!");
         feedbackTimer.current = setTimeout(() => {
           setTyped([]);
           setFeedback(null);
@@ -641,7 +625,7 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
             >
               {feedback === "correct"
                 ? "🌟 Amazing! Correct! 🌟"
-                : `❌ It's: ${currentWord.word}`}
+                : "❌ Not quite! Try again! 🎯"}
             </motion.div>
           )}
         </AnimatePresence>
@@ -672,7 +656,7 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
             <div className="flex justify-center gap-2 w-full">
               <motion.button
                 whileTap={{ scale: 0.92 }}
-                onPointerDown={(e) => { e.preventDefault(); setShowDefinition(v => !v); speak(currentWord.definition, 0.72); }}
+                onPointerDown={(e) => { e.preventDefault(); setShowDefinition(v => !v); speak(currentWord.definition); }}
                 className="flex items-center gap-1.5 px-5 py-2 rounded-2xl font-bold text-white shadow-[0_4px_0_rgba(0,0,0,0.12)]"
                 style={{ background: "linear-gradient(135deg, #a78bfa, #7c3aed)", fontFamily: "'Nunito', sans-serif", fontSize: 14 }}
               >

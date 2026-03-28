@@ -260,6 +260,7 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
   const [showDefinition, setShowDefinition] = useState(false);
   const [groupComplete, setGroupComplete] = useState(false);
   const [wrongLetters, setWrongLetters] = useState<Set<string>>(new Set());
+  const [spellingIndex, setSpellingIndex] = useState<number>(-1); // active letter during Spell It
   const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const blockInput = useRef(false);
 
@@ -268,13 +269,104 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
   const targetLetters = currentWord.word.toLowerCase().replace(/[^a-z]/g, "");
   const displayChars = currentWord.word.split("");
 
-  const speakWord = useCallback((text: string) => {
-    if ("speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
+  // ── Speech helpers ────────────────────────────────────────────────────────
+  // Pick the clearest available voice (prefer a female English voice for kids)
+  const pickVoice = useCallback((): SpeechSynthesisVoice | null => {
+    if (!("speechSynthesis" in window)) return null;
+    const voices = window.speechSynthesis.getVoices();
+    // Prefer voices that work well on Fire tablet / Android WebView
+    const preferred = voices.find(v =>
+      v.lang.startsWith("en") && /samantha|karen|moira|victoria|fiona|google us|google uk|zira|hazel/i.test(v.name)
+    ) || voices.find(v => v.lang === "en-US" && v.localService) ||
+      voices.find(v => v.lang.startsWith("en"));
+    return preferred || null;
+  }, []);
+
+  const speak = useCallback((text: string, rate = 0.72, pitch = 1.0) => {
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.rate = rate;
+    utt.pitch = pitch;
+    utt.volume = 1.0;
+    const v = pickVoice();
+    if (v) utt.voice = v;
+    window.speechSynthesis.speak(utt);
+  }, [pickVoice]);
+
+  // Speak word clearly: say it once, pause, say it again
+  const speakWord = useCallback((word: string) => {
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const voice = pickVoice();
+
+    const say = (text: string, rate: number, onEnd?: () => void) => {
       const utt = new SpeechSynthesisUtterance(text);
-      utt.rate = 0.8;
-      utt.pitch = 1.05;
+      utt.rate = rate;
+      utt.pitch = 1.0;
+      utt.volume = 1.0;
+      if (voice) utt.voice = voice;
+      if (onEnd) utt.onend = onEnd;
       window.speechSynthesis.speak(utt);
+    };
+
+    // Say word slowly, then pause (via silent utterance), then say again
+    say(word, 0.68, () => {
+      const pause = new SpeechSynthesisUtterance(" ");
+      pause.volume = 0;
+      pause.rate = 0.1;
+      if (voice) pause.voice = voice;
+      pause.onend = () => say(word, 0.72);
+      window.speechSynthesis.speak(pause);
+    });
+  }, [pickVoice]);
+
+  // Spell it out: say word, then each letter with highlight sync
+  const spellWord = useCallback((word: string) => {
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    setSpellingIndex(-1);
+    const voice = pickVoice();
+    const letters = word.replace(/[^a-zA-Z]/g, "").split("");
+
+    const say = (text: string, rate: number, onStart?: () => void, onEnd?: () => void) => {
+      const utt = new SpeechSynthesisUtterance(text);
+      utt.rate = rate;
+      utt.pitch = 1.0;
+      utt.volume = 1.0;
+      if (voice) utt.voice = voice;
+      if (onStart) utt.onstart = onStart;
+      if (onEnd) utt.onend = onEnd;
+      window.speechSynthesis.speak(utt);
+    };
+
+    // First say the full word, then spell each letter with highlight
+    say(word, 0.7, undefined, () => {
+      const spellLetters = (idx: number) => {
+        if (idx >= letters.length) {
+          setSpellingIndex(-1);
+          return;
+        }
+        say(
+          letters[idx],
+          0.55,
+          () => setSpellingIndex(idx),
+          () => spellLetters(idx + 1)
+        );
+      };
+      const pause = new SpeechSynthesisUtterance(" ");
+      pause.volume = 0; pause.rate = 0.1;
+      if (voice) pause.voice = voice;
+      pause.onend = () => spellLetters(0);
+      window.speechSynthesis.speak(pause);
+    });
+  }, [pickVoice]);
+
+  // Ensure voices are loaded (needed on some Android/Fire OS browsers)
+  useEffect(() => {
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.getVoices();
+      window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
     }
   }, []);
 
@@ -284,9 +376,10 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
     setFeedback(null);
     setShowDefinition(false);
     setWrongLetters(new Set());
+    setSpellingIndex(-1);
     setBeeState("idle");
     blockInput.current = false;
-    const t = setTimeout(() => speakWord(currentWord.word), 350);
+    const t = setTimeout(() => speakWord(currentWord.word), 400);
     return () => clearTimeout(t);
   }, [wordIndex, currentWord.word, speakWord]);
 
@@ -313,7 +406,7 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
         setBeeState("happy");
         setShowConfetti(true);
         onUpdateProgress(currentWord.id, true);
-        speakWord("Amazing! You got it!");
+        speak("Amazing! You got it!", 0.85, 1.1);
         feedbackTimer.current = setTimeout(advanceWord, 2000);
       } else {
         setFeedback("wrong");
@@ -321,7 +414,7 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
         const wrong = new Set<string>();
         newTyped.forEach((l, i) => { if (l !== targetLetters[i]) wrong.add(l); });
         setWrongLetters(wrong);
-        speakWord("Oops! Try again!");
+        speak("Oops! Try again!", 0.85, 1.0);
         feedbackTimer.current = setTimeout(() => {
           setTyped([]);
           setFeedback(null);
@@ -495,30 +588,36 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
             }
             const s = getSlotStyle(li);
             const typedChar = typed[li]?.toUpperCase() ?? "";
+            const isSpellingActive = spellingIndex === li;
             return (
               <motion.div
                 key={i}
                 animate={
-                  feedback === "wrong" && li < typed.length
+                  isSpellingActive
+                    ? { scale: [1, 1.25, 1], y: [0, -6, 0] }
+                    : feedback === "wrong" && li < typed.length
                     ? { x: [0, -7, 7, -7, 7, 0] }
                     : feedback === "correct"
                     ? { scale: [1, 1.2, 1], rotate: [0, -5, 5, 0] }
                     : {}
                 }
-                transition={{ duration: 0.4, delay: li * 0.04 }}
+                transition={{ duration: isSpellingActive ? 0.35 : 0.4, delay: isSpellingActive ? 0 : li * 0.04 }}
                 className="flex items-center justify-center rounded-xl font-extrabold text-2xl"
                 style={{
                   width: 46,
                   height: 52,
-                  background: s.bg,
-                  border: `3px solid ${s.border}`,
-                  color: s.text,
-                  boxShadow: "0 4px 0 rgba(0,0,0,0.12)",
+                  background: isSpellingActive ? "#fbbf24" : s.bg,
+                  border: isSpellingActive ? "3px solid #d97706" : `3px solid ${s.border}`,
+                  color: isSpellingActive ? "#78350f" : s.text,
+                  boxShadow: isSpellingActive ? "0 4px 0 #d97706, 0 0 12px rgba(251,191,36,0.6)" : "0 4px 0 rgba(0,0,0,0.12)",
                   fontFamily: "'Baloo 2', cursive",
-                  transition: "background 0.15s, border-color 0.15s",
+                  transition: "background 0.1s, border-color 0.1s",
                 }}
               >
-                {typedChar}
+                {/* Show the letter during spelling mode even if not typed yet */}
+                {isSpellingActive
+                  ? currentWord.word.replace(/[^a-zA-Z]/g, "")[li]?.toUpperCase() ?? typedChar
+                  : typedChar}
               </motion.div>
             );
           })}
@@ -549,31 +648,45 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
 
         {/* Action buttons */}
         {!feedback && (
-          <div className="flex justify-center gap-2 mt-1.5 px-3">
-            <motion.button
-              whileTap={{ scale: 0.92 }}
-              onPointerDown={(e) => { e.preventDefault(); speakWord(currentWord.word); }}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-2xl font-bold text-white text-sm shadow-[0_4px_0_rgba(0,0,0,0.12)]"
-              style={{ background: "linear-gradient(135deg, #60a5fa, #3b82f6)", fontFamily: "'Nunito', sans-serif" }}
-            >
-              🔊 Hear Word
-            </motion.button>
-            <motion.button
-              whileTap={{ scale: 0.92 }}
-              onPointerDown={(e) => { e.preventDefault(); setShowDefinition(v => !v); speakWord(currentWord.definition); }}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-2xl font-bold text-white text-sm shadow-[0_4px_0_rgba(0,0,0,0.12)]"
-              style={{ background: "linear-gradient(135deg, #a78bfa, #7c3aed)", fontFamily: "'Nunito', sans-serif" }}
-            >
-              💡 Hint
-            </motion.button>
-            <motion.button
-              whileTap={{ scale: 0.92 }}
-              onPointerDown={(e) => { e.preventDefault(); advanceWord(); }}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-2xl font-bold text-white text-sm shadow-[0_4px_0_rgba(0,0,0,0.12)]"
-              style={{ background: "linear-gradient(135deg, #94a3b8, #64748b)", fontFamily: "'Nunito', sans-serif" }}
-            >
-              ⏭ Skip
-            </motion.button>
+          <div className="flex flex-col items-center gap-1.5 mt-1.5 px-3">
+            {/* Row 1: primary audio buttons */}
+            <div className="flex justify-center gap-2 w-full">
+              <motion.button
+                whileTap={{ scale: 0.92 }}
+                onPointerDown={(e) => { e.preventDefault(); speakWord(currentWord.word); }}
+                className="flex items-center gap-1.5 px-5 py-2.5 rounded-2xl font-bold text-white shadow-[0_4px_0_rgba(0,0,0,0.15)]"
+                style={{ background: "linear-gradient(135deg, #38bdf8, #0ea5e9)", fontFamily: "'Nunito', sans-serif", fontSize: 15 }}
+              >
+                🔊 Hear Word
+              </motion.button>
+              <motion.button
+                whileTap={{ scale: 0.92 }}
+                onPointerDown={(e) => { e.preventDefault(); spellWord(currentWord.word); }}
+                className="flex items-center gap-1.5 px-5 py-2.5 rounded-2xl font-bold text-white shadow-[0_4px_0_rgba(0,0,0,0.15)]"
+                style={{ background: "linear-gradient(135deg, #fb923c, #f97316)", fontFamily: "'Nunito', sans-serif", fontSize: 15 }}
+              >
+                🔤 Spell It
+              </motion.button>
+            </div>
+            {/* Row 2: hint + skip */}
+            <div className="flex justify-center gap-2 w-full">
+              <motion.button
+                whileTap={{ scale: 0.92 }}
+                onPointerDown={(e) => { e.preventDefault(); setShowDefinition(v => !v); speak(currentWord.definition, 0.72); }}
+                className="flex items-center gap-1.5 px-5 py-2 rounded-2xl font-bold text-white shadow-[0_4px_0_rgba(0,0,0,0.12)]"
+                style={{ background: "linear-gradient(135deg, #a78bfa, #7c3aed)", fontFamily: "'Nunito', sans-serif", fontSize: 14 }}
+              >
+                💡 Hint
+              </motion.button>
+              <motion.button
+                whileTap={{ scale: 0.92 }}
+                onPointerDown={(e) => { e.preventDefault(); advanceWord(); }}
+                className="flex items-center gap-1.5 px-5 py-2 rounded-2xl font-bold text-white shadow-[0_4px_0_rgba(0,0,0,0.12)]"
+                style={{ background: "linear-gradient(135deg, #94a3b8, #64748b)", fontFamily: "'Nunito', sans-serif", fontSize: 14 }}
+              >
+                ⏭ Skip
+              </motion.button>
+            </div>
           </div>
         )}
       </div>

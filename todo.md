@@ -19,3 +19,8 @@
 - [x] Add vite.github-pages.config.ts with /spelling-bee-app/ base path
 - [x] Add build:pages script to package.json
 - [x] Create .github/workflows/deploy-pages.yml GitHub Actions workflow for GitHub Pages deployment
+- [ ] Fix word audio playing 5 times back-to-back
+- [ ] Fix "Amazing!" / correct feedback audio playing 3 times after answering
+- [x] Fix word audio playing 5 times back-to-back
+- [x] Fix "Amazing!" / correct feedback audio playing 3 times after answering
+- [ ] Replace Google Translate TTS with a more natural-sounding voice (works on Fire tablet)

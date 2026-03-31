@@ -263,6 +263,8 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
   const [spellingIndex, setSpellingIndex] = useState<number>(-1); // active letter during Spell It
   const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const blockInput = useRef(false);
+  // Stable ref so the word-change useEffect never re-fires due to speakWord identity changes
+  const speakWordRef = useRef<(word: string) => void>(() => {});
 
   const currentWord = group[wordIndex];
   // Only use letters for the answer (handle multi-word, accented chars etc.)
@@ -358,7 +360,12 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
       .catch(() => {});
   }, [playTTS, stopAudio]);
 
-  // Reset state when word changes
+  // Keep the ref in sync with the latest speakWord without adding it to the effect deps
+  useEffect(() => {
+    speakWordRef.current = speakWord;
+  });
+
+  // Reset state when word changes — uses ref so this only fires when wordIndex actually changes
   useEffect(() => {
     setTyped([]);
     setFeedback(null);
@@ -367,9 +374,16 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
     setSpellingIndex(-1);
     setBeeState("idle");
     blockInput.current = false;
-    const t = setTimeout(() => speakWord(currentWord.word), 400);
-    return () => clearTimeout(t);
-  }, [wordIndex, currentWord.word, speakWord]);
+    let cancelled = false;
+    const t = setTimeout(() => {
+      if (!cancelled) speakWordRef.current(currentWord.word);
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wordIndex]);
 
   const advanceWord = useCallback(() => {
     if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
@@ -390,13 +404,18 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
       blockInput.current = true;
       const attempt = newTyped.join("");
       if (attempt === targetLetters) {
+        stopAudio(); // stop any in-progress audio before playing feedback
         setFeedback("correct");
         setBeeState("happy");
         setShowConfetti(true);
         onUpdateProgress(currentWord.id, true);
         speak("Amazing! You got it!");
-        feedbackTimer.current = setTimeout(advanceWord, 2000);
+        feedbackTimer.current = setTimeout(() => {
+          stopAudio(); // stop feedback audio before advancing to next word
+          advanceWord();
+        }, 2000);
       } else {
+        stopAudio(); // stop any in-progress audio before playing feedback
         setFeedback("wrong");
         setBeeState("sad");
         const wrong = new Set<string>();

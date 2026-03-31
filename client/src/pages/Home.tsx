@@ -261,6 +261,7 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
   const [groupComplete, setGroupComplete] = useState(false);
   const [wrongLetters, setWrongLetters] = useState<Set<string>>(new Set());
   const [spellingIndex, setSpellingIndex] = useState<number>(-1); // active letter during Spell It
+  const [hasWrongAttempt, setHasWrongAttempt] = useState(false); // unlocks Hint after first wrong answer
   const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const blockInput = useRef(false);
   // Stable ref so the word-change useEffect never re-fires due to speakWord identity changes
@@ -406,14 +407,14 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
     speakWordRef.current = speakWord;
   });
 
-  // Reset state when word changes — uses ref so this only fires when wordIndex actually changes
+  // Reset state when word changes — uses ref so this only fires when wordIndex actuall  // Reset typed when word changes
   useEffect(() => {
     setTyped([]);
     setFeedback(null);
     setShowDefinition(false);
     setWrongLetters(new Set());
     setSpellingIndex(-1);
-    setBeeState("idle");
+    setHasWrongAttempt(false);
     blockInput.current = false;
     let cancelled = false;
     const t = setTimeout(() => {
@@ -457,6 +458,7 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
         }, 2000);
       } else {
         stopAudio(); // stop any in-progress audio before playing feedback
+        setHasWrongAttempt(true);
         setFeedback("wrong");
         setBeeState("sad");
         const wrong = new Set<string>();
@@ -696,45 +698,45 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
 
         {/* Action buttons */}
         {!feedback && (
-          <div className="flex flex-col items-center gap-1.5 mt-1.5 px-3">
-            {/* Row 1: primary audio buttons */}
-            <div className="flex justify-center gap-2 w-full">
-              <motion.button
-                whileTap={{ scale: 0.92 }}
-                onPointerDown={(e) => { e.preventDefault(); speakWord(currentWord.word); }}
-                className="flex items-center gap-1.5 px-5 py-2.5 rounded-2xl font-bold text-white shadow-[0_4px_0_rgba(0,0,0,0.15)]"
-                style={{ background: "linear-gradient(135deg, #38bdf8, #0ea5e9)", fontFamily: "'Nunito', sans-serif", fontSize: 15 }}
-              >
-                🔊 Hear Word
-              </motion.button>
-              <motion.button
-                whileTap={{ scale: 0.92 }}
-                onPointerDown={(e) => { e.preventDefault(); spellWord(currentWord.word); }}
-                className="flex items-center gap-1.5 px-5 py-2.5 rounded-2xl font-bold text-white shadow-[0_4px_0_rgba(0,0,0,0.15)]"
-                style={{ background: "linear-gradient(135deg, #fb923c, #f97316)", fontFamily: "'Nunito', sans-serif", fontSize: 15 }}
-              >
-                🔤 Spell It
-              </motion.button>
-            </div>
-            {/* Row 2: hint + skip */}
-            <div className="flex justify-center gap-2 w-full">
-              <motion.button
-                whileTap={{ scale: 0.92 }}
-                onPointerDown={(e) => { e.preventDefault(); setShowDefinition(v => !v); speak(currentWord.definition); }}
-                className="flex items-center gap-1.5 px-5 py-2 rounded-2xl font-bold text-white shadow-[0_4px_0_rgba(0,0,0,0.12)]"
-                style={{ background: "linear-gradient(135deg, #a78bfa, #7c3aed)", fontFamily: "'Nunito', sans-serif", fontSize: 14 }}
-              >
-                💡 Hint
-              </motion.button>
-              <motion.button
-                whileTap={{ scale: 0.92 }}
-                onPointerDown={(e) => { e.preventDefault(); advanceWord(); }}
-                className="flex items-center gap-1.5 px-5 py-2 rounded-2xl font-bold text-white shadow-[0_4px_0_rgba(0,0,0,0.12)]"
-                style={{ background: "linear-gradient(135deg, #94a3b8, #64748b)", fontFamily: "'Nunito', sans-serif", fontSize: 14 }}
-              >
-                ⏭ Skip
-              </motion.button>
-            </div>
+          <div className="flex justify-center gap-2 mt-1.5 px-3">
+            <motion.button
+              whileTap={{ scale: 0.92 }}
+              onPointerDown={(e) => { e.preventDefault(); speakWord(currentWord.word); }}
+              className="flex items-center gap-1.5 px-5 py-2.5 rounded-2xl font-bold text-white shadow-[0_4px_0_rgba(0,0,0,0.15)]"
+              style={{ background: "linear-gradient(135deg, #38bdf8, #0ea5e9)", fontFamily: "'Nunito', sans-serif", fontSize: 15 }}
+            >
+              🔊 Hear Word
+            </motion.button>
+            <motion.button
+              whileTap={hasWrongAttempt ? { scale: 0.92 } : {}}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                if (!hasWrongAttempt) return;
+                setShowDefinition(v => !v);
+                speak(currentWord.definition);
+              }}
+              className="flex items-center gap-1.5 px-5 py-2.5 rounded-2xl font-bold shadow-[0_4px_0_rgba(0,0,0,0.15)] transition-opacity"
+              style={{
+                background: hasWrongAttempt
+                  ? "linear-gradient(135deg, #a78bfa, #7c3aed)"
+                  : "linear-gradient(135deg, #d1d5db, #9ca3af)",
+                color: hasWrongAttempt ? "white" : "#6b7280",
+                fontFamily: "'Nunito', sans-serif",
+                fontSize: 15,
+                opacity: hasWrongAttempt ? 1 : 0.6,
+                cursor: hasWrongAttempt ? "pointer" : "not-allowed",
+              }}
+            >
+              💡 Hint
+            </motion.button>
+            <motion.button
+              whileTap={{ scale: 0.92 }}
+              onPointerDown={(e) => { e.preventDefault(); advanceWord(); }}
+              className="flex items-center gap-1.5 px-5 py-2.5 rounded-2xl font-bold text-white shadow-[0_4px_0_rgba(0,0,0,0.12)]"
+              style={{ background: "linear-gradient(135deg, #94a3b8, #64748b)", fontFamily: "'Nunito', sans-serif", fontSize: 15 }}
+            >
+              ⏭ Skip
+            </motion.button>
           </div>
         )}
       </div>

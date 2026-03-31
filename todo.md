@@ -19,10 +19,9 @@
 - [x] Add vite.github-pages.config.ts with /spelling-bee-app/ base path
 - [x] Add build:pages script to package.json
 - [x] Create .github/workflows/deploy-pages.yml GitHub Actions workflow for GitHub Pages deployment
-- [ ] Fix word audio playing 5 times back-to-back
-- [ ] Fix "Amazing!" / correct feedback audio playing 3 times after answering
 - [x] Fix word audio playing 5 times back-to-back
 - [x] Fix "Amazing!" / correct feedback audio playing 3 times after answering
 - [x] Replace Google Translate TTS with smart Web Speech API voice selection (Amazon Polly priority on Fire tablet)
 - [x] Decided on Web Speech API only (GitHub Pages static deployment, no backend)
 - [x] Revert Puter.js TTS, implement smart Web Speech API voice selection (Amazon Polly on Fire tablet, best neural voice on other browsers)
+- [x] Remove Spell It button entirely; keep only Hint (greyed out until first wrong attempt on current word)

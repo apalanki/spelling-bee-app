@@ -271,9 +271,54 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
   const targetLetters = currentWord.word.toLowerCase().replace(/[^a-z]/g, "");
   const displayChars = currentWord.word.split("");
 
-  // ── TTS helpers — uses Google Translate audio URL as <Audio> src (no CORS on media elements)
-  // Falls back to Web Speech API if audio fails.
+  // ── TTS helpers — uses Web Speech API with smart voice selection
+  // Priority: Amazon Polly (Fire tablet) > Google Neural > Microsoft Neural > best available
   const currentAudio = useRef<HTMLAudioElement | null>(null);
+  const selectedVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
+
+  // Pick the best available voice once voices are loaded
+  const pickBestVoice = useCallback((): SpeechSynthesisVoice | null => {
+    if (!("speechSynthesis" in window)) return null;
+    if (selectedVoiceRef.current) return selectedVoiceRef.current;
+    const voices = window.speechSynthesis.getVoices();
+    if (!voices.length) return null;
+
+    // Ranked preference list — most natural first
+    const preferred = [
+      // Amazon Polly voices (Fire tablet Silk browser)
+      (v: SpeechSynthesisVoice) => /polly/i.test(v.name) && /joanna|matthew|amy|brian/i.test(v.name),
+      (v: SpeechSynthesisVoice) => /polly/i.test(v.name),
+      // Google neural voices (Chrome/Android)
+      (v: SpeechSynthesisVoice) => /google/i.test(v.name) && /us english/i.test(v.name),
+      (v: SpeechSynthesisVoice) => /google/i.test(v.name) && /en.US/i.test(v.lang),
+      // Microsoft neural voices (Edge/Windows)
+      (v: SpeechSynthesisVoice) => /microsoft/i.test(v.name) && /aria|jenny|guy/i.test(v.name),
+      (v: SpeechSynthesisVoice) => /microsoft/i.test(v.name) && /en.US/i.test(v.lang),
+      // Any en-US voice
+      (v: SpeechSynthesisVoice) => v.lang === "en-US",
+      // Any English voice
+      (v: SpeechSynthesisVoice) => v.lang.startsWith("en"),
+    ];
+
+    for (const test of preferred) {
+      const match = voices.find(test);
+      if (match) {
+        selectedVoiceRef.current = match;
+        console.log("[TTS] Selected voice:", match.name, match.lang);
+        return match;
+      }
+    }
+    selectedVoiceRef.current = voices[0];
+    return voices[0];
+  }, []);
+
+  // Load voices eagerly — some browsers fire onvoiceschanged asynchronously
+  useEffect(() => {
+    if (!("speechSynthesis" in window)) return;
+    const load = () => pickBestVoice();
+    window.speechSynthesis.onvoiceschanged = load;
+    load(); // try immediately (sync browsers)
+  }, [pickBestVoice]);
 
   const stopAudio = useCallback(() => {
     if (currentAudio.current) {
@@ -284,44 +329,40 @@ function PracticeScreen({ groupIndex, onBack, progress, onUpdateProgress }: {
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   }, []);
 
-  // Build a Google Translate TTS URL — browsers can load audio src cross-origin without CORS
-  const gttsUrl = (text: string) =>
-    `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=en&client=tw-ob&ttsspeed=0.8`;
-
-  // Play a single piece of text via Google TTS audio; falls back to Web Speech API
+  // Play text using the best available Web Speech API voice
   const playTTS = useCallback((text: string): Promise<void> => {
     return new Promise((resolve) => {
       stopAudio();
-      const audio = new Audio(gttsUrl(text));
-      audio.crossOrigin = "anonymous";
-      currentAudio.current = audio;
-      audio.onended = () => resolve();
-      audio.onerror = () => {
-        // Fallback: browser Web Speech API
-        if ("speechSynthesis" in window) {
-          const utt = new SpeechSynthesisUtterance(text);
-          utt.rate = 0.75; utt.pitch = 1.0; utt.volume = 1.0;
-          utt.onend = () => resolve();
-          utt.onerror = () => resolve();
-          window.speechSynthesis.speak(utt);
-        } else {
-          resolve();
-        }
+      if (!("speechSynthesis" in window)) { resolve(); return; }
+
+      // Ensure voices are loaded before speaking
+      const doSpeak = () => {
+        const utt = new SpeechSynthesisUtterance(text);
+        const voice = pickBestVoice();
+        if (voice) utt.voice = voice;
+        utt.lang = "en-US";
+        utt.rate = 0.72;   // slow and clear for a 6-year-old
+        utt.pitch = 1.0;
+        utt.volume = 1.0;
+        utt.onend = () => resolve();
+        utt.onerror = () => resolve();
+        window.speechSynthesis.speak(utt);
       };
-      audio.play().catch(() => {
-        // autoplay blocked — try Web Speech API
-        if ("speechSynthesis" in window) {
-          const utt = new SpeechSynthesisUtterance(text);
-          utt.rate = 0.75; utt.pitch = 1.0; utt.volume = 1.0;
-          utt.onend = () => resolve();
-          utt.onerror = () => resolve();
-          window.speechSynthesis.speak(utt);
-        } else {
-          resolve();
-        }
-      });
+
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length > 0) {
+        doSpeak();
+      } else {
+        // Wait for voices to load (async browsers like Chrome)
+        window.speechSynthesis.onvoiceschanged = () => {
+          pickBestVoice();
+          doSpeak();
+        };
+        // Timeout fallback
+        setTimeout(doSpeak, 500);
+      }
     });
-  }, [stopAudio]);
+  }, [stopAudio, pickBestVoice]);
 
   // Simple one-shot speak (for feedback messages)
   const speak = useCallback((text: string) => {

@@ -23,4 +23,6 @@
 - [ ] Fix "Amazing!" / correct feedback audio playing 3 times after answering
 - [x] Fix word audio playing 5 times back-to-back
 - [x] Fix "Amazing!" / correct feedback audio playing 3 times after answering
-- [ ] Replace Google Translate TTS with a more natural-sounding voice (works on Fire tablet)
+- [x] Replace Google Translate TTS with smart Web Speech API voice selection (Amazon Polly priority on Fire tablet)
+- [x] Decided on Web Speech API only (GitHub Pages static deployment, no backend)
+- [x] Revert Puter.js TTS, implement smart Web Speech API voice selection (Amazon Polly on Fire tablet, best neural voice on other browsers)
